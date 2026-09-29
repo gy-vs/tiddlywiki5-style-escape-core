@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PostMessage saver test host</title>
+</head>
+<body>
+<h1 id="host-heading">Host page</h1>
+<iframe id="wiki-frame" style="width:900px;height:600px"></iframe>
+<script>
+(function() {
+"use strict";
+
+/*
+Test host page implementing the postMessage/MessageChannel hosting protocol.
+
+Configuration is taken from the query string and hash:
+  ?wiki=<path to the wiki html file>
+  #topics=save,pagetitle,favicon  comma separated topics to subscribe to (default all)
+  #reply=ok|error|none            automatic reply to SAVE messages (default "ok")
+  #replyDelay=<ms>                delay before the automatic reply
+  #timeout=<ms>                   host-side timeout after which an unreplied SAVE
+                                  is recorded as timed out (0 = disabled, default 0)
+
+Collected state is exposed for the test runner at window.__host:
+  messages:  array of {topic,data} received over any port
+  saves:     array of the data of every SAVE message
+  subscribe: function(topic) -> MessagePort (the port given to the wiki)
+  unsubscribe: function(topic)
+*/
+
+var params = new URLSearchParams(location.search.slice(1));
+var hashParams = new URLSearchParams(location.hash.slice(1));
+
+var topics = (hashParams.get("topics") || "save,pagetitle,favicon")
+	.split(",").map(function(t) { return t.trim().toUpperCase(); }).filter(Boolean);
+var replyMode = hashParams.get("reply") || "ok";
+var replyDelay = parseInt(hashParams.get("replyDelay") || "0",10);
+var hostTimeout = parseInt(hashParams.get("timeout") || "0",10);
+
+var state = {
+	messages: [],
+	saves: [],
+	ports: {},
+	channels: {},
+	subscribe: subscribe,
+	unsubscribe: unsubscribe
+};
+window.__host = state;
+
+function subscribe(topic) {
+	topic = topic.toUpperCase();
+	var channel = new MessageChannel();
+	state.channels[topic] = channel;
+	state.ports[topic] = channel.port1;
+	channel.port1.onmessage = function(event) {
+		var data = event.data;
+		state.messages.push({topic: topic, data: data});
+		if(data && data.verb === "SAVE") {
+			state.saves.push(data);
+			handleSave(channel.port1,data);
+		}
+	};
+	channel.port1.start();
+	var frame = document.getElementById("wiki-frame");
+	frame.contentWindow.postMessage({verb: "SUBSCRIBE", to: topic}, "*", [channel.port2]);
+	return channel.port1;
+}
+
+function unsubscribe(topic) {
+	topic = topic.toUpperCase();
+	var port = state.ports[topic];
+	if(port) {
+		port.postMessage({verb: "UNSUBSCRIBE", to: topic});
+	}
+}
+
+function handleSave(port,data) {
+	var saveRecord = state.saves[state.saves.length - 1];
+	saveRecord.status = "pending";
+	if(replyMode === "ok") {
+		setTimeout(function() {
+			port.postMessage({verb: "OK"});
+			saveRecord.status = "acknowledged";
+		},replyDelay);
+	} else if(replyMode === "error") {
+		setTimeout(function() {
+			port.postMessage({verb: "ERROR", reason: "host rejected the save"});
+			saveRecord.status = "rejected";
+		},replyDelay);
+	} else if(hostTimeout > 0) {
+		setTimeout(function() {
+			if(saveRecord.status === "pending") {
+				saveRecord.status = "timeout";
+			}
+		},hostTimeout);
+	}
+}
+
+window.addEventListener("load",function() {
+	var frame = document.getElementById("wiki-frame");
+	frame.addEventListener("load",function() {
+		topics.forEach(subscribe);
+		state.ready = true;
+	});
+	frame.src = params.get("wiki") || "output/test.html";
+});
+
+})();
+</script>
+</body>
+</html>

@@ -34,9 +34,16 @@ exports.startup = function() {
 	$tw.titleContainer = $tw.fakeDocument.createElement("div");
 	$tw.titleWidgetNode.render($tw.titleContainer,null);
 	document.title = $tw.titleContainer.textContent;
+	// Publish the page title to any host page that has subscribed to it
+	var messaging = $tw.utils.Messaging.getInstance();
+	messaging.registerProvider("PAGETITLE",function() {
+		return {verb: "PAGETITLE", body: document.title};
+	});
+	messaging.publish("PAGETITLE",{verb: "PAGETITLE", body: document.title});
 	$tw.wiki.addEventListener("change",function(changes) {
 		if($tw.titleWidgetNode.refresh(changes,$tw.titleContainer,null)) {
 			document.title = $tw.titleContainer.textContent;
+			messaging.publish("PAGETITLE",{verb: "PAGETITLE", body: document.title});
 		}
 	});
 	// Set up the styles

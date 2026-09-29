@@ -1,0 +1,60 @@
+title: $:/core/Hosting
+
+/*\
+This tiddler documents the protocol used by the `postmessage` saver to host
+a single-file TiddlyWiki inside an iframe belonging to another web page.
+\*/
+
+! Hosting TiddlyWiki in an iframe
+
+A host page can embed a single-file TiddlyWiki in an iframe and take responsibility for saving it, and for keeping its own UI in step with the wiki's page title and favicon. Communication uses `window.postMessage` together with `MessageChannel`/`MessagePort`, so that each subscription gets its own dedicated port.
+
+!! Subscribing
+
+To subscribe to a topic, the host creates a `MessageChannel` and posts a subscription message to the iframe's window, transferring one end of the channel:
+
+```
+var channel = new MessageChannel();
+iframe.contentWindow.postMessage({verb: "SUBSCRIBE", to: topic}, targetOrigin, [channel.port2]);
+```
+
+`topic` is one of:
+
+|!Topic |!Meaning
+|`SAVE` |The host wants to receive the complete wiki HTML whenever the wiki is saved
+|`PAGETITLE` |The host wants the wiki's page title
+|`FAVICON` |The host wants the wiki's favicon as a data URI
+
+Each subscription is independent: a port receives messages only for the topic named in its subscription. As soon as a subscription is accepted the current value of the topic (if any) is sent immediately, so the host does not have to wait for the next change.
+
+!! Saving
+
+When the wiki is saved manually or auto-saved, each port subscribed to `SAVE` receives:
+
+```
+{verb: "SAVE", method: "save" | "autosave", body: "<full wiki HTML>"}
+```
+
+The host must reply on the same port with:
+
+```
+{verb: "OK"}
+```
+
+to confirm that the save succeeded. Any other reply verb (optionally with a `reason` string) is treated as an error and shown to the user; the wiki remains dirty so that the save can be retried. If no reply arrives within the timeout (default 10 seconds, configurable via the tiddler `$:/config/PostMessageSaver/Timeout`), the save is reported as failed.
+
+While at least one host is subscribed to `SAVE`, the `postmessage` saver handles all saves; when no host is subscribed (or all hosts have unsubscribed), saving falls through to the other installed savers such as the download saver.
+
+!! Page title and favicon
+
+Ports subscribed to `PAGETITLE` receive `{verb: "PAGETITLE", body: <title string>}` whenever the wiki's page title changes, and ports subscribed to `FAVICON` receive `{verb: "FAVICON", body: <data URI or null>}` whenever the favicon tiddler changes.
+
+!! Unsubscribing
+
+A host can stop receiving a topic by posting on its own port:
+
+```
+channel.port1.postMessage({verb: "UNSUBSCRIBE", to: topic});
+```
+
+Closing the port entirely has the same effect: subsequent saves then fall through to other savers.

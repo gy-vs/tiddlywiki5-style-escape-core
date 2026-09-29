@@ -22,6 +22,11 @@ function SaverHandler(options) {
 	this.pendingAutoSave = false;
 	// Make a logger
 	this.logger = new $tw.utils.Logger("saver-handler");
+	// Set up host page messaging early, so that SUBSCRIBE messages from a
+	// hosting iframe parent are received even before the first save
+	if($tw.browser && $tw.utils.Messaging) {
+		$tw.utils.Messaging.getInstance();
+	}
 	// Initialise our savers
 	if($tw.browser) {
 		this.initSavers();
