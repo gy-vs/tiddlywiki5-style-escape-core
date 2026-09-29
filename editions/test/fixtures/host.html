@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Test host page</title>
+<style>
+	body { font-family: sans-serif; }
+	iframe { width: 900px; height: 500px; border: 1px solid #ccc; }
+	#log li { font-family: monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Host page</h1>
+<p>Current title: <span id="pageTitle">(none)</span></p>
+<p>Current favicon: <img id="faviconImg" alt="(none)" width="16" height="16"></p>
+<p>
+	<button id="saveOk">save and reply OK</button>
+	<button id="saveError">save and reply ERROR</button>
+	<button id="saveTimeout">save and never reply</button>
+	<button id="unsubscribeSAVE">unsubscribe SAVE</button>
+</p>
+<ul id="log"></ul>
+<iframe id="wikiFrame"></iframe>
+<script>
+(function() {
+	"use strict";
+	var iframe = document.getElementById("wikiFrame");
+	var logEl = document.getElementById("log");
+	var state = {
+		ports: {},       // subject -> MessagePort
+		saveMessages: [] // {verb, body} messages received on the SAVE port
+	};
+	window.hostState = state;
+
+	function log(msg) {
+		var li = document.createElement("li");
+		li.textContent = msg;
+		logEl.appendChild(li);
+	}
+
+	/*
+	Subscribe to a wiki subject. replyMode applies to SAVE:
+	"ok" replies {verb:"OK"}, "error" replies {verb:"ERROR"},
+	"timeout" never replies. Default is "ok".
+	*/
+	window.subscribe = function(subject,replyMode) {
+		var channel = new MessageChannel();
+		var port = channel.port1;
+		port.start();
+		state.ports[subject] = port;
+		port.onmessage = function(event) {
+			var data = event.data;
+			log("host received " + data.verb + (subject ? " on " + subject : ""));
+			if(subject === "SAVE") {
+				state.saveMessages.push(data);
+				if(data.verb === "SAVE") {
+					if(replyMode === "ok" || replyMode === undefined) {
+						port.postMessage({verb: "OK"});
+					} else if(replyMode === "error") {
+						port.postMessage({verb: "ERROR", message: "host says no"});
+					}
+					// "timeout": no reply
+				}
+			} else if(subject === "PAGETITLE" && data.verb === "PAGETITLE") {
+				document.getElementById("pageTitle").textContent = data.body;
+			} else if(subject === "FAVICON" && data.verb === "FAVICON") {
+				document.getElementById("faviconImg").src = data.body;
+			}
+		};
+		iframe.contentWindow.postMessage({verb: "SUBSCRIBE", to: subject}, "*", [channel.port2]);
+	};
+
+	window.unsubscribe = function(subject) {
+		var port = state.ports[subject];
+		if(port) {
+			port.close();
+			delete state.ports[subject];
+		}
+		iframe.contentWindow.postMessage({verb: "UNSUBSCRIBE", to: subject}, "*");
+	};
+
+	/*
+	Emulate an unrelated page that ignores SUBSCRIBE protocol messages but
+	shares the window message channel
+	*/
+	window.postUnrelatedMessage = function() {
+		iframe.contentWindow.postMessage({verb: "GET", url: "recipes/library/tiddlers.json"}, "*");
+	};
+
+	/*
+	Load the wiki, optionally subscribing to the given subjects up front
+	*/
+	window.loadWiki = function(url,subjects) {
+		state.saveMessages = [];
+		iframe.src = url;
+		return new Promise(function(resolve) {
+			iframe.onload = function() {
+				(subjects || []).forEach(function(subject) {
+					window.subscribe(subject,"ok");
+				});
+				resolve();
+			};
+		});
+	};
+
+	document.getElementById("saveOk").addEventListener("click",function() {
+		window.subscribe("SAVE","ok");
+	});
+	document.getElementById("saveError").addEventListener("click",function() {
+		window.subscribe("SAVE","error");
+	});
+	document.getElementById("saveTimeout").addEventListener("click",function() {
+		window.subscribe("SAVE","timeout");
+	});
+	document.getElementById("unsubscribeSAVE").addEventListener("click",function() {
+		window.unsubscribe("SAVE");
+	});
+})();
+</script>
+</body>
+</html>

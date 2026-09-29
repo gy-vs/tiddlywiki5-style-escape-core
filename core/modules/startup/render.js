@@ -34,9 +34,30 @@ exports.startup = function() {
 	$tw.titleContainer = $tw.fakeDocument.createElement("div");
 	$tw.titleWidgetNode.render($tw.titleContainer,null);
 	document.title = $tw.titleContainer.textContent;
+	// Publish the page title to any host page that subscribes to it
+	var messageHub = $tw.utils.getMessageHub && $tw.utils.getMessageHub();
+	function publishPageTitle() {
+		if(messageHub && messageHub.hasSubscriber("PAGETITLE")) {
+			messageHub.post("PAGETITLE",{
+				verb: "PAGETITLE",
+				body: $tw.titleContainer.textContent
+			});
+		}
+	}
+	if(messageHub) {
+		// A host page subscribing immediately receives the current value
+		messageHub.addListener("PAGETITLE",function(event) {
+			if(event.type === "subscribe") {
+				publishPageTitle();
+			}
+		});
+		// Cover a subscription that arrived before this startup module ran
+		publishPageTitle();
+	}
 	$tw.wiki.addEventListener("change",function(changes) {
 		if($tw.titleWidgetNode.refresh(changes,$tw.titleContainer,null)) {
 			document.title = $tw.titleContainer.textContent;
+			publishPageTitle();
 		}
 	});
 	// Set up the styles
